@@ -5,6 +5,7 @@ import warnings
 import multiprocessing
 import subprocess
 import random
+import time
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, Sampler
@@ -23,8 +24,10 @@ IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1)
 
 def quick_audio_load(video_path):
     # Extract mono audio at 24kHz
-    cmd = ['ffmpeg', '-i', video_path, '-ac', '1', '-ar', '24000', '-f', 'wav', '-']
-    audio_buffer = io.BytesIO(subprocess.check_output(cmd))
+    cmd = ['ffmpeg','-hide_banner', '-i', video_path, '-ac', '1', '-ar', '24000', '-f', 'wav', '-', '-loglevel', 'error']  # Added -loglevel error
+    #audio_buffer = io.BytesIO(subprocess.check_output(cmd))
+    audio_buffer = io.BytesIO(subprocess.check_output(cmd, stderr=subprocess.DEVNULL))
+
     waveform, sample_rate = torchaudio.load(audio_buffer)
     assert sample_rate == 24000
     assert waveform.size(0) == 1  # mono
@@ -33,7 +36,7 @@ def quick_audio_load(video_path):
 
 def extract_audio_from_video(video_path: Path) -> torch.Tensor:
     """Extract entire 1s audio from video."""
-    device = torch.device("cuda")
+    device = torch.device("cpu")
     config_path = "/home/cis/heyo/AudTok/WavTokenizer/checkpoints/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml"
     model_path = "/home/cis/heyo/AudTok/WavTokenizer/checkpoints/WavTokenizer_small_600_24k_4096.ckpt"
     wavtokenizer = WavTokenizer.from_pretrained0802(config_path, model_path)
@@ -65,14 +68,15 @@ def load_and_preprocess_video(video_path: str) -> torch.Tensor:
 class VideoAudioDataset(Dataset):
     def __init__(self, video_dir):
         self.video_paths = list(Path(video_dir).glob('*.mp4'))  # or whatever pattern matches your files
+        self.audio_tokens_path = Path("/home/cis/VGGSound_sound_tokens/")
         
     def __len__(self):
         return len(self.video_paths)
         
     def __getitem__(self, idx):
         video_path = self.video_paths[idx]
-        audio = extract_audio_from_video(video_path)
-        frames = load_and_preprocess_video(str(video_path))  # This needs updating
+        audio = torch.load(self.audio_tokens_path / f"{video_path.stem}.pt").squeeze()
+        frames = load_and_preprocess_video(str(video_path)).squeeze()  # This needs updating
         
         return {
             'path': str(video_path),
@@ -92,11 +96,15 @@ if __name__ == "__main__":
     print(f"Audio shape: {sample['audio'].shape}")    # Your discrete codes [1, 40]
     
     # Test with DataLoader to make sure batching works
-    loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=2)
-    
+    loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=2, persistent_workers=True)
+    import time
+    start = time.time()
     for batch in loader:
         print("\nBatch info:")
-        print(f"Batch paths: {batch['path']}")
-        print(f"Batch frames: {batch['frames'].shape}")
+        #print(f"Batch paths: {batch['path']}")
+        print(f"Batch frames: {batch['frames'].shape}") #
         print(f"Batch audio: {batch['audio'].shape}")
-        break  # Just test one batch
+        end = time.time()
+        print(f"Time taken: {end - start}")
+        start = end
+          # Just test one batch
