@@ -1,37 +1,38 @@
-import torch
-from torch.utils.data import Dataset, Sampler
-from pathlib import Path
-import numpy as np
-import random
-import av
-from typing import Dict, List
-import torch.nn as nn
-import torchaudio.transforms as T
-import warnings
-warnings.filterwarnings("ignore")
-import multiprocessing
-#import dataloader
-from torchcodec.decoders import VideoDecoder
-from torch.utils.data import DataLoader
-# Attempt to use fork for potentially faster dataloader start
-#try:
-    #multiprocessing.set_start_method('fork', force=True)
-#except:
-multiprocessing.set_start_method('spawn', force=True)
-import gc
 import sys
+from pathlib import Path
+import io
+import warnings
+import multiprocessing
+import subprocess
+import random
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader, Sampler
+import torchaudio
+import torchaudio.transforms as T
+from torchcodec.decoders import VideoDecoder
+import torchvision.transforms as transforms
+# Local imports
 sys.path.append("/home/cis/heyo/AudTok/WavTokenizer")
 from decoder.pretrained import WavTokenizer
-from encoder.utils import convert_audio
-
-# Global normalization constants (ImageNet)
+warnings.filterwarnings("ignore")
+multiprocessing.set_start_method('spawn', force=True)
+# Constants
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(-1, 1, 1)
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1)
 
+def quick_audio_load(video_path):
+    # Extract mono audio at 24kHz
+    cmd = ['ffmpeg', '-i', video_path, '-ac', '1', '-ar', '24000', '-f', 'wav', '-']
+    audio_buffer = io.BytesIO(subprocess.check_output(cmd))
+    waveform, sample_rate = torchaudio.load(audio_buffer)
+    assert sample_rate == 24000
+    assert waveform.size(0) == 1  # mono
+    
+    return waveform, sample_rate
 
 def extract_audio_from_video(video_path: Path) -> torch.Tensor:
     """Extract entire 1s audio from video."""
-    #print("extracting audio from video")
     device = torch.device("cuda")
     config_path = "/home/cis/heyo/AudTok/WavTokenizer/checkpoints/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml"
     model_path = "/home/cis/heyo/AudTok/WavTokenizer/checkpoints/WavTokenizer_small_600_24k_4096.ckpt"
@@ -39,48 +40,63 @@ def extract_audio_from_video(video_path: Path) -> torch.Tensor:
     wavtokenizer = wavtokenizer.to(device)
     bandwidth_id = torch.tensor([0])
     try:
-        container = av.open(str(video_path))
-        audio = container.streams.audio[0]
-        resampler = av.audio.resampler.AudioResampler(format='s16', layout='mono', rate=24000)
-        
-        samples = []
-        for frame in container.decode(audio):
-            frame.pts = None
-            frame = resampler.resample(frame)[0]
-            samples.append(frame.to_ndarray().reshape(-1))
-        container.close()
-
-        samples = torch.tensor(np.concatenate(samples))#[:24000*1] #only take first second
-        samples = samples.float() / 32768.0  # Convert to float and normalize
-        samples = samples.unsqueeze(0).to(device)
-        print(samples.shape)
-        _,discrete_code= wavtokenizer.encode_infer(samples, bandwidth_id=bandwidth_id)
+        waveform, sample_rate = quick_audio_load(video_path)
+        waveform = waveform[:, :24000*1]
+        waveform = waveform.to(device)
+        _,discrete_code= wavtokenizer.encode_infer(waveform, bandwidth_id=bandwidth_id)
         return discrete_code.squeeze(0) # (1, 40) 
-        
     except:
         print(f"Failed to load audio from {video_path}")
-        return torch.zeros(16331)
-    finally:
-        if container:
-            container.close()
-
+        return torch.zeros(1, 40)
 
 def load_and_preprocess_video(video_path: str) -> torch.Tensor:
     decoder = VideoDecoder(video_path, device="cpu")
-    #picking random time between 0 and 1 second
     time = random.uniform(0, 1)
     frame = decoder.get_frames_played_at(seconds=[time]).data # [B, C, H, W]
-    transforms = T.Compose([
-        T.Resize((224, 224), antialias=True),
-        T.Lambda(lambda x: x / 255.0),
-        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-    frame_tensor = transforms(frame)
+    transform = transforms.Compose([
+        transforms.Resize((224, 224), antialias=True),
+        transforms.Lambda(lambda x: x / 255.0),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    frame_tensor = transform(frame)
     frame_tensor = frame_tensor.to(torch.device("cuda"))
     return frame_tensor
 
+class VideoAudioDataset(Dataset):
+    def __init__(self, video_dir):
+        self.video_paths = list(Path(video_dir).glob('*.mp4'))  # or whatever pattern matches your files
+        
+    def __len__(self):
+        return len(self.video_paths)
+        
+    def __getitem__(self, idx):
+        video_path = self.video_paths[idx]
+        audio = extract_audio_from_video(video_path)
+        frames = load_and_preprocess_video(str(video_path))  # This needs updating
+        
+        return {
+            'path': str(video_path),
+            'frames': frames,
+            'audio': audio
+        }
 
 if __name__ == "__main__":
-    video_path = "/home/cis/VGGSound_Splits/0_0.mp4"
-    audio = extract_audio_from_video(video_path)
-    print(audio.shape)
+    # Test with a small directory first
+    video_dir = "/home/cis/VGGSound_Splits"
+    dataset = VideoAudioDataset(video_dir)
+    
+    # Let's look at one sample
+    sample = dataset[0]
+    print(f"Video path: {sample['path']}")
+    print(f"Frames shape: {sample['frames'].shape}")  # Should be something like [T, C, H, W]
+    print(f"Audio shape: {sample['audio'].shape}")    # Your discrete codes [1, 40]
+    
+    # Test with DataLoader to make sure batching works
+    loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=2)
+    
+    for batch in loader:
+        print("\nBatch info:")
+        print(f"Batch paths: {batch['path']}")
+        print(f"Batch frames: {batch['frames'].shape}")
+        print(f"Batch audio: {batch['audio'].shape}")
+        break  # Just test one batch
