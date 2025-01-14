@@ -61,8 +61,9 @@ def train(
         dataset, 
         batch_size=batch_size, 
         shuffle=True, 
-        num_workers=12,
-        persistent_workers=True
+        num_workers=4,
+        persistent_workers=True,
+        prefetch_factor=8
         #pin_memory=True
     )
     
@@ -123,7 +124,9 @@ def train(
             audio = batch['audio'].to(device)
             
             # Forward pass
-            loss, _ = model(frames, audio)
+            #print("Going to forward pass")
+            loss, token_probs, stats = model(frames, audio)
+            #print("Forward pass complete")
             epoch_losses.append(loss.item())
             
             # Backward pass
@@ -140,7 +143,8 @@ def train(
                     "train_loss": loss.item(),
                     "learning_rate": optimizer.param_groups[0]['lr'],
                     "epoch": epoch,
-                    "global_step": global_step
+                    "global_step": global_step,
+                    **stats,  # This unpacks all our stats
                 }, step=global_step)
             
             # Visualization step
@@ -149,25 +153,25 @@ def train(
                 with torch.no_grad():
                     patch_probs = model(vis_samples['frames'], vis_samples['audio'])
                     # Debug prediction statistics
-                    #print("\nVisualization Sample Statistics:")
-                    #print(f"Patch probs shape: {patch_probs.shape}")  # Should be [batch, 256, 4096]
+                    print("\nVisualization Sample Statistics:")
+                    print(f"Patch probs shape: {patch_probs.shape}")  # Should be [batch, 256, 4096]
                     probs = torch.sigmoid(patch_probs)
                     
-                    #print(f"Overall stats:")
-                    #print(f"Mean prob: {probs.mean():.4f}")
-                    #print(f"Prob >0.5: {(probs > 0.5).float().mean():.4f}")
-                    #print(f"Prob >0.7: {(probs > 0.7).float().mean():.4f}")
-                    #print(f"Prob >0.9: {(probs > 0.9).float().mean():.4f}")
+                    print(f"Overall stats:")
+                    print(f"Mean prob: {probs.mean():.4f}")
+                    print(f"Prob >0.5: {(probs > 0.5).float().mean():.4f}")
+                    print(f"Prob >0.7: {(probs > 0.7).float().mean():.4f}")
+                    print(f"Prob >0.9: {(probs > 0.9).float().mean():.4f}")
                     
                     # For each sample in batch
-                    #for b in range(len(vis_samples['audio'])):
-                        #print(f"\nSample {b}:")
+                    for b in range(len(vis_samples['audio'])):
+                        print(f"\nSample {b}:")
                         # Get probabilities for just the tokens that appear in the audio
-                        #token_probs = probs[b, :, vis_samples['audio'][b]]  # [256, 40]
-                        #print(f"Token-specific stats:")
-                        #print(f"Mean prob for audio tokens: {token_probs.mean():.4f}")
-                        #print(f"Max prob for audio tokens: {token_probs.max():.4f}")
-                        #print(f"Patches with prob >0.5 for audio tokens: {(token_probs > 0.5).float().mean():.4f}")
+                        token_probs = probs[b, :, vis_samples['audio'][b]]  # [256, 40]
+                        print(f"Token-specific stats:")
+                        print(f"Mean prob for audio tokens: {token_probs.mean():.4f}")
+                        print(f"Max prob for audio tokens: {token_probs.max():.4f}")
+                        print(f"Patches with prob >0.5 for audio tokens: {(token_probs > 0.5).float().mean():.4f}")
                     
                 # Create and save visualization grid
                 grid = save_snapshot_grid(
@@ -234,8 +238,8 @@ def train(
 
 if __name__ == "__main__":
     # Training parameters
-    NUM_EPOCHS = 100
-    BATCH_SIZE = 32
+    NUM_EPOCHS = 50
+    BATCH_SIZE = 80
     LEARNING_RATE = 1e-4
     VIS_INTERVAL = 1000
     CHECKPOINT_INTERVAL = 5000

@@ -28,6 +28,38 @@ class ViTEmbedder(nn.Module):
         x = self.model.get_intermediate_layers(x, n=1)[0]
         x = self.classifier(x)
         return x
+def compute_prediction_stats(token_probs, target):
+    """
+    Args:
+        token_probs: [batch_size, 4096] sigmoid probabilities
+        target: [batch_size, 4096] binary targets
+    """
+    # For positive samples (where target = 1)
+    pos_probs = token_probs[target == 1]
+    pos_stats = {
+        "pos_mean_prob": pos_probs.mean().item(),
+        "pos_under_25": (pos_probs < 0.25).float().mean().item(),
+        "pos_over_75": (pos_probs > 0.75).float().mean().item(),
+        "pos_correct": (pos_probs > 0.5).float().mean().item()
+    }
+
+    # For negative samples (where target = 0)
+    neg_probs = token_probs[target == 0]
+    neg_stats = {
+        "neg_mean_prob": neg_probs.mean().item(),
+        "neg_under_25": (neg_probs < 0.25).float().mean().item(),
+        "neg_over_75": (neg_probs > 0.75).float().mean().item(),
+        "neg_incorrect": (neg_probs > 0.5).float().mean().item()
+    }
+
+    # Overall prediction distribution
+    all_stats = {
+        "mean_prob": token_probs.mean().item(),
+        "under_25": (token_probs < 0.25).float().mean().item(),
+        "over_75": (token_probs > 0.75).float().mean().item(),
+    }
+
+    return {**pos_stats, **neg_stats, **all_stats}
 
 class Valo(nn.Module):
     def __init__(self):
@@ -69,8 +101,9 @@ class Valo(nn.Module):
         
         # Binary cross entropy between probabilities and targets
         loss = F.binary_cross_entropy(token_probs, target)
-        
-        return loss, token_probs
+
+        stats = compute_prediction_stats(token_probs, target)
+        return loss, token_probs, stats
         
     def forward(self, video, audio):
         """
@@ -88,8 +121,8 @@ class Valo(nn.Module):
         
         # If we're in training mode, compute loss
         if self.training:
-            loss, token_probs = self.compute_audio_visual_loss(patch_logits, audio)
-            return loss, token_probs
+            loss, token_probs, stats = self.compute_audio_visual_loss(patch_logits, audio)
+            return loss, token_probs, stats
         else:
             # During inference, return raw patch probabilities for visualization
             patch_probs = torch.sigmoid(patch_logits)  # [batch_size, 256, 4096]
