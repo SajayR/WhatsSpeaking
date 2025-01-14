@@ -77,7 +77,7 @@ class VideoAudioDataset(Dataset):
         video_path = self.video_paths[idx]
         audio = torch.load(self.audio_tokens_path / f"{video_path.stem}.pt").squeeze()
         frames = load_and_preprocess_video(str(video_path)).squeeze()  # This needs updating
-        
+        print(audio)
         return {
             'path': str(video_path),
             'frames': frames,
@@ -92,8 +92,8 @@ if __name__ == "__main__":
     # Let's look at one sample
     sample = dataset[0]
     print(f"Video path: {sample['path']}")
-    print(f"Frames shape: {sample['frames'].shape}")  # Should be something like [T, C, H, W]
-    print(f"Audio shape: {sample['audio'].shape}")    # Your discrete codes [1, 40]
+    print(f"Frames shape: {sample['frames'].shape}")  # Should be like [C, H, W]
+    print(f"Audio shape: {sample['audio'].shape}")    # Your discrete codes [40]
     
     # Test with DataLoader to make sure batching works
     loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=2, persistent_workers=True)
