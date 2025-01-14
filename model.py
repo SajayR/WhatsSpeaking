@@ -67,42 +67,40 @@ class Valo(nn.Module):
         self.vit = ViTEmbedder()
         
     def compute_audio_visual_loss(self, patch_logits, audio_tokens, vocab_size=4096):
-        """
-        Args:
-            patch_logits: [batch_size, 256, 4096] - logits for each patch
-            audio_tokens: [batch_size, 40] - token indices
-        Returns:
-            loss: scalar
-        """
         batch_size = patch_logits.size(0)
-        #print(f"Audio tokens shape: {audio_tokens.shape}")
-        #print("Unique tokens per batch:")
-        #for b in range(batch_size):
-        #    unique_tokens = torch.unique(audio_tokens[b])
-        #    print(f"Batch {b}: {len(unique_tokens)} unique out of 40 tokens")
         
         # Create binary target vector
         target = torch.zeros(batch_size, vocab_size, device=patch_logits.device)
-        # For each item in batch, set 1s at token indices
         for b in range(batch_size):
             target[b, audio_tokens[b]] = 1
 
-        # Get max prediction across patches for each token
-        # [batch_size, 256, 4096] -> [batch_size, 4096]
-        # In compute_audio_visual_loss
-        #print(f"Number of 1s in target: {target.sum()}")  # Should be 40 per batch
-        #print(f"Target shape: {target.shape}")  # Should be [batch_size, 4096]
+        # Get max prediction across patches for each token [batch_size, 4096]
         max_logits_per_token = patch_logits.max(dim=1)[0]
         
-        # Apply sigmoid after taking max to get probabilities
-        token_probs = torch.sigmoid(max_logits_per_token)
-        #print(f"Mean prediction probability: {token_probs.mean():.4f}")
-        #print(f"Fraction of predictions >0.5: {(token_probs > 0.5).float().mean():.4f}")
+        # Get top-k logits and indices
+        k = 40  # Same as number of audio tokens
+        _, top_k_indices = torch.topk(max_logits_per_token, k, dim=1)
         
-        # Binary cross entropy between probabilities and targets
+        # Create a binary mask for top-k positions
+        mask = torch.zeros_like(max_logits_per_token)
+        mask.scatter_(1, top_k_indices, 1.0)
+        
+        # Apply sigmoid and mask
+        token_probs = torch.sigmoid(max_logits_per_token) * mask
+        
+        # Compute loss only on the selected tokens
         loss = F.binary_cross_entropy(token_probs, target)
-
+        
+        # Add top-k accuracy to stats
+        top_k_accuracy = torch.zeros(batch_size, device=patch_logits.device)
+        for b in range(batch_size):
+            correct_tokens = set(audio_tokens[b].cpu().numpy())
+            predicted_tokens = set(top_k_indices[b].cpu().numpy())
+            top_k_accuracy[b] = len(correct_tokens.intersection(predicted_tokens)) / k
+        
         stats = compute_prediction_stats(token_probs, target)
+        stats['top_k_accuracy'] = top_k_accuracy.mean().item()
+        
         return loss, token_probs, stats
         
     def forward(self, video, audio):

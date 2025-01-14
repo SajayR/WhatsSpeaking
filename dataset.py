@@ -63,6 +63,7 @@ def load_and_preprocess_video(video_path: str) -> torch.Tensor:
     ])
     frame_tensor = transform(frame)
     frame_tensor = frame_tensor.to(torch.device("cuda"))
+    del decoder
     return frame_tensor
 
 class VideoAudioDataset(Dataset):
