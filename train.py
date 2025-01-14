@@ -6,10 +6,15 @@ from pathlib import Path
 import time
 import numpy as np
 from viz import save_snapshot_grid
-
+import gc
 from dataset import VideoAudioDataset
 from model import Valo
-DO_WANDB = True
+DO_WANDB = False
+import resource
+soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+print(f"File limit increased from {soft} to {hard}")
+
 def get_visualization_samples(dataset, num_samples=16):
     """
     Get fixed samples for visualization throughout training
@@ -62,7 +67,7 @@ def train(
         batch_size=batch_size, 
         shuffle=True, 
         num_workers=4,
-        persistent_workers=True,
+        persistent_workers=False,
         prefetch_factor=8
         #pin_memory=True
     )
@@ -155,7 +160,7 @@ def train(
                     # Debug prediction statistics
                     print("\nVisualization Sample Statistics:")
                     print(f"Patch probs shape: {patch_probs.shape}")  # Should be [batch, 256, 4096]
-                    probs = torch.sigmoid(patch_probs)
+                    probs = patch_probs
                     
                     print(f"Overall stats:")
                     print(f"Mean prob: {probs.mean():.4f}")
@@ -174,6 +179,7 @@ def train(
                         print(f"Patches with prob >0.5 for audio tokens: {(token_probs > 0.5).float().mean():.4f}")
                     
                 # Create and save visualization grid
+                print(f"Patch probs during visualization: {patch_probs}")
                 grid = save_snapshot_grid(
                     vis_samples['frames'], 
                     vis_samples['audio'],
@@ -189,6 +195,8 @@ def train(
                     }, step=global_step)
                 
                 model.train()
+                torch.cuda.empty_cache()
+                gc.collect()
             
             # Save checkpoint
             if global_step % checkpoint_interval == 0 and global_step > 0:
@@ -239,7 +247,7 @@ def train(
 if __name__ == "__main__":
     # Training parameters
     NUM_EPOCHS = 50
-    BATCH_SIZE = 80
+    BATCH_SIZE = 5#80
     LEARNING_RATE = 1e-4
     VIS_INTERVAL = 1000
     CHECKPOINT_INTERVAL = 5000
