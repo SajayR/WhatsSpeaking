@@ -16,7 +16,7 @@ class ViTEmbedder(nn.Module):
         self.classifier = nn.Linear(self.model.embed_dim, 4096)
         
         for param in self.model.parameters():
-            param.requires_grad = True
+            param.requires_grad = False
             
     def forward(self, x):
         """
@@ -38,18 +38,18 @@ def compute_prediction_stats(token_probs, target):
     pos_probs = token_probs[target == 1]
     pos_stats = {
         "pos_mean_prob": pos_probs.mean().item(),
-        "pos_under_25": (pos_probs < 0.25).float().mean().item(),
-        "pos_over_75": (pos_probs > 0.75).float().mean().item(),
-        "pos_correct": (pos_probs > 0.5).float().mean().item()
+        "pos_under_25": (pos_probs < 0.25).float().mean().item(), #bad
+        "pos_over_75": (pos_probs > 0.75).float().mean().item(), #good
+        "pos_correct": (pos_probs > 0.5).float().mean().item() #good
     }
 
     # For negative samples (where target = 0)
     neg_probs = token_probs[target == 0]
     neg_stats = {
         "neg_mean_prob": neg_probs.mean().item(),
-        "neg_under_25": (neg_probs < 0.25).float().mean().item(),
-        "neg_over_75": (neg_probs > 0.75).float().mean().item(),
-        "neg_incorrect": (neg_probs > 0.5).float().mean().item()
+        "neg_under_25": (neg_probs < 0.25).float().mean().item(), #good
+        "neg_over_75": (neg_probs > 0.75).float().mean().item(), #bad
+        "neg_incorrect": (neg_probs > 0.5).float().mean().item() #bad
     }
 
     # Overall prediction distribution
@@ -84,7 +84,8 @@ class Valo(nn.Module):
         # Create a binary mask for top-k positions
         mask = torch.zeros_like(max_logits_per_token)
         mask.scatter_(1, top_k_indices, 1.0)
-        
+       #print("Top-k indices: ", top_k_indices[0])
+        #print("Audio tokens: ", audio_tokens[0])
         # Apply sigmoid and mask
         token_probs = torch.sigmoid(max_logits_per_token) * mask
         
@@ -116,7 +117,8 @@ class Valo(nn.Module):
                 patch_probs: tensor of shape (batch_size, 256, 4096) - per-patch probabilities
         """
         patch_logits = self.vit(video)  # [batch_size, 256, 4096]
-        
+        #print(f"Patch logits shape: {patch_logits.shape}")
+        #print(f"Patch logits: {patch_logits[0]}")
         # If we're in training mode, compute loss
         if self.training:
             loss, token_probs, stats = self.compute_audio_visual_loss(patch_logits, audio)

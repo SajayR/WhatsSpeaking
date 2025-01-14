@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 import time
 import numpy as np
-from viz import save_snapshot_grid
+from viz import save_snapshot_grid, create_visualization_video
 import gc
 from dataset import VideoAudioDataset
 from model import Valo
@@ -179,7 +179,14 @@ def train(
                         print(f"Patches with prob >0.5 for audio tokens: {(token_probs > 0.5).float().mean():.4f}")
                     
                 # Create and save visualization grid
-                print(f"Patch probs during visualization: {patch_probs}")
+                #print(f"Patch prob shape during visualization: {patch_probs[0].shape}")
+                #print(f"Patch probs during visualization: {patch_probs[0]}")
+                # Get top 10 values
+                #top_values, top_indices = torch.topk(patch_probs[0].flatten(), 10)
+                #print("\nTop 10 patch probability values:")
+                #for i, (val, idx) in enumerate(zip(top_values, top_indices)):
+                #    print(f"{i+1}. Value: {val:.4f}, Index: {idx}")
+                print(f"Range of patch probs: {patch_probs.min().item()} to {patch_probs.max().item()}")
                 grid = save_snapshot_grid(
                     vis_samples['frames'], 
                     vis_samples['audio'],
@@ -187,7 +194,8 @@ def train(
                     output_dir,
                     step=global_step
                 )
-                
+                #saving video for the first sample
+                create_visualization_video(vis_samples['frames'][0], vis_samples['audio'][0], patch_probs[0], output_dir / f"visualization_step{global_step}.mp4")
                 # Log to wandb
                 if DO_WANDB:
                     wandb.log({
@@ -247,7 +255,7 @@ def train(
 if __name__ == "__main__":
     # Training parameters
     NUM_EPOCHS = 50
-    BATCH_SIZE = 5#80
+    BATCH_SIZE = 2
     LEARNING_RATE = 1e-4
     VIS_INTERVAL = 1000
     CHECKPOINT_INTERVAL = 5000
