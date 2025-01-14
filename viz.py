@@ -125,22 +125,20 @@ def create_visualization_video(frame, audio_tokens, patch_probs, output_path, fp
     video_writer.release()
 
 
-def process_batch_visualizations(frames, audio_tokens, patch_probs, file_paths, output_dir):
+def process_batch_visualizations(frames, audio_tokens, patch_probs, file_paths, output_dir, step=None):
     """
-    Process a batch of model outputs and create visualizations
-    
-    Args:
-        frames: [B, 3, 224, 224] tensor of input frames
-        audio_tokens: [B, 40] tensor of token sequences
-        patch_probs: [B, 256, 4096] tensor of patch probabilities
-        file_paths: list of original video paths
-        output_dir: directory to save visualization videos
+    Added step parameter for unique file naming
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
     
     for i in range(len(frames)):
-        output_path = output_dir / f"{Path(file_paths[i]).stem}_viz.mp4"
+        # Add step number to filename if provided
+        if step is not None:
+            output_path = output_dir / f"{Path(file_paths[i]).stem}_step{step}_viz.mp4"
+        else:
+            output_path = output_dir / f"{Path(file_paths[i]).stem}_viz.mp4"
+            
         create_visualization_video(
             frames[i],
             audio_tokens[i],
@@ -203,6 +201,25 @@ def create_snapshot_grid(frames, audio_tokens, patch_probs, n_samples=6):
     final_grid = torch.cat(sample_grids, dim=1)
     return final_grid
 
+def save_snapshot_grid(frames, audio_tokens, patch_probs, output_dir, step=None, n_samples=6):
+    """
+    Creates and saves snapshot grid with step number in filename
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(exist_ok=True)
+    
+    grid = create_snapshot_grid(frames, audio_tokens, patch_probs, n_samples)
+    grid_np = grid.permute(1, 2, 0).numpy()
+    
+    # Add step number to filename if provided
+    if step is not None:
+        output_path = output_dir / f"snapshot_grid_step{step}.png"
+    else:
+        output_path = output_dir / "snapshot_grid.png"
+        
+    cv2.imwrite(str(output_path), cv2.cvtColor(grid_np, cv2.COLOR_RGB2BGR))
+    return grid
+
 def test_visualization():
     # Load a real frame from one of your videos
     video_path = "0_2.mp4"  # Use any video path
@@ -223,44 +240,29 @@ def test_visualization():
     print(f"Audio tokens: {audio_tokens.shape}")
     print(f"Patch probs: {patch_probs.shape}")
 
-    # Use the batched frames instead of real_frame
-    grid = create_snapshot_grid(frames, audio_tokens, patch_probs, n_samples=6)
-    print(f"\nGrid shape: {grid.shape}")
-        
-    # Save grid as image to check
-    grid_np = grid.permute(1, 2, 0).numpy()
-    cv2.imwrite('/home/cis/heyo/AudTok/WhosSpeaking/test_visualizations/test_grid.png', 
-                cv2.cvtColor(grid_np, cv2.COLOR_RGB2BGR))
-    print("\nSnapshot grid saved as test_grid.png")
-   
     file_paths = [
-        video_path,
-        video_path
+        "0_2.mp4",
+        "0_2.mp4"
     ]
-    output_dir = Path("/home/cis/heyo/AudTok/WhosSpeaking/test_visualizations")
-    
-    try:
+    # Use the batched frames instead of real_frame
+    steps = [0, 100, 500]
+    for step in steps:
+        # Save snapshot grid
+        save_snapshot_grid(frames, audio_tokens, patch_probs, 
+                         '/home/cis/heyo/AudTok/WhosSpeaking/test_visualizations', 
+                         step=step)
+        print(f"\nSnapshot grid saved for step {step}")
+        
+        # Save videos
         process_batch_visualizations(
             frames, 
             audio_tokens, 
             patch_probs, 
             file_paths, 
-            output_dir
+            Path("/home/cis/heyo/AudTok/WhosSpeaking/test_visualizations"),
+            step=step
         )
-        print(f"\nVisualization complete! Check {output_dir} for outputs")
-        
-        # Print some stats about the output videos
-        for video_path in output_dir.glob("*.mp4"):
-            cap = cv2.VideoCapture(str(video_path))
-            num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            print(f"\nVideo {video_path.name}:")
-            print(f"Number of frames: {num_frames}")
-            print(f"FPS: {fps}")
-            cap.release()
-            
-    except Exception as e:
-        print(f"Error during visualization: {e}")
+        print(f"Videos saved for step {step}")
 
 if __name__ == "__main__":
     test_visualization()

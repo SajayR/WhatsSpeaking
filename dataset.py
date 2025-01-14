@@ -77,7 +77,7 @@ class VideoAudioDataset(Dataset):
         video_path = self.video_paths[idx]
         audio = torch.load(self.audio_tokens_path / f"{video_path.stem}.pt").squeeze()
         frames = load_and_preprocess_video(str(video_path)).squeeze()  # This needs updating
-        print(audio)
+        #print(audio)
         return {
             'path': str(video_path),
             'frames': frames,
