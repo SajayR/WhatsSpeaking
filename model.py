@@ -16,7 +16,7 @@ class ViTEmbedder(nn.Module):
         self.classifier = nn.Linear(self.model.embed_dim, 4096)
         
         for param in self.model.parameters():
-            param.requires_grad = False
+            param.requires_grad = True
             
     def forward(self, x):
         """
@@ -88,9 +88,12 @@ class Valo(nn.Module):
         #print("Audio tokens: ", audio_tokens[0])
         # Apply sigmoid and mask
         token_probs = torch.sigmoid(max_logits_per_token) * mask
+
+        weights = torch.ones_like(target)
+        weights[target == 1] = 50
         
         # Compute loss only on the selected tokens
-        loss = F.binary_cross_entropy(token_probs, target)
+        loss = F.binary_cross_entropy(token_probs, target, weight=weights)
         
         # Add top-k accuracy to stats
         top_k_accuracy = torch.zeros(batch_size, device=patch_logits.device)

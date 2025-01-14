@@ -9,7 +9,7 @@ from viz import save_snapshot_grid, create_visualization_video
 import gc
 from dataset import VideoAudioDataset
 from model import Valo
-DO_WANDB = False
+DO_WANDB = True
 import resource
 soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
@@ -255,7 +255,7 @@ def train(
 if __name__ == "__main__":
     # Training parameters
     NUM_EPOCHS = 50
-    BATCH_SIZE = 2
+    BATCH_SIZE = 80
     LEARNING_RATE = 1e-4
     VIS_INTERVAL = 1000
     CHECKPOINT_INTERVAL = 5000
