@@ -156,36 +156,37 @@ from torch.nn import MultiheadAttention, Dropout, LayerNorm
 class CustomTransformerDecoderLayer(nn.TransformerDecoderLayer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # We will store cross attention weights here after forward pass
         self.cross_attn_weights = None
 
-    def forward(self, tgt, memory, tgt_mask=None, memory_mask=None,
-                tgt_key_padding_mask=None, memory_key_padding_mask=None):
-
+    def forward(self, tgt, memory, **kwargs):  # Just catch everything with kwargs
         # Self-attention
         x = tgt
-        x2 = self.self_attn(
-            x, x, x,
-            attn_mask=tgt_mask,
-            key_padding_mask=tgt_key_padding_mask,
-            need_weights=False,  # we don't store self-attn weights here
-        )[0]
+        # Convert kwargs for self_attn
+        self_attn_kwargs = {
+            'attn_mask': kwargs.get('tgt_mask'),
+            'key_padding_mask': kwargs.get('tgt_key_padding_mask'),
+            'need_weights': False
+        }
+        if 'tgt_is_causal' in kwargs:
+            self_attn_kwargs['is_causal'] = kwargs['tgt_is_causal']
+
+        x2 = self.self_attn(x, x, x, **self_attn_kwargs)[0]
+        
         x = x + self.dropout1(x2)
         x = self.norm1(x)
 
-        # Cross-attention
-        x2, cross_attn_w = self.multihead_attn(
-            x, memory, memory,
-            attn_mask=memory_mask,
-            key_padding_mask=memory_key_padding_mask,
-            need_weights=True  # we DO want cross-attn weights
-        )
-        # Store them
-        self.cross_attn_weights = cross_attn_w  # shape [B, num_heads, T, 256]
-        
+        # Cross-attention with correct kwarg names
+        cross_attn_kwargs = {
+            'attn_mask': kwargs.get('memory_mask'),
+            'key_padding_mask': kwargs.get('memory_key_padding_mask'),
+            'need_weights': True
+        }
+        x2, cross_attn_w = self.multihead_attn(x, memory, memory, **cross_attn_kwargs)
+        self.cross_attn_weights = cross_attn_w
+
         x = x + self.dropout2(x2)
         x = self.norm2(x)
-        
+
         # Feed-forward
         x2 = self.linear2(self.dropout(self.activation(self.linear1(x))))
         x = x + self.dropout3(x2)

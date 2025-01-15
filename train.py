@@ -13,7 +13,7 @@ from viz import create_visualization_video  # We'll assume we adapted viz.py for
 from dataset import VideoAudioDataset
 from model import ValoAR  # <-- Your new autoregressive model (rename as needed)
 
-DO_WANDB = True
+DO_WANDB = False
 
 # Increase file limit if needed
 soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
