@@ -23,11 +23,7 @@ def load_test_frame(video_path):
 
 def unnormalize_frame(frame):
     """
-    Reverses ImageNet normalization on a frame while keeping size at 224x224
-    Args:
-        frame: [3, 224, 224] normalized tensor
-    Returns:
-        frame: [3, 224, 224] unnormalized tensor (0-255 range)
+    Same as your existing code
     """
     mean = torch.tensor([0.485, 0.456, 0.406]).view(-1, 1, 1).to(frame.device)
     std = torch.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1).to(frame.device)
@@ -47,81 +43,60 @@ def get_token_heatmap(patch_probs, token_idx):
     heatmap = token_probs.view(16, 16)  # Reshape to spatial grid
     return heatmap
 
-def create_sequential_heatmaps(patch_probs, audio_tokens):
+def create_sequential_heatmaps(cross_attn, num_steps=40):
     """
-    Args:
-        patch_probs: [256, 4096] probabilities for all patches
-        audio_tokens: [40] sequence of token indices in temporal order
-    Returns:
-        heatmap_sequence: [40, 16, 16] sequence of spatial heatmaps
+    Instead of patch_probs [256, 4096], we have cross_attn [T, 256].
+    We assume T==num_steps. We'll reshape each step from [256] -> [16, 16].
     """
+    # cross_attn is [T, 256]
+    # We'll just gather each slice
     heatmap_sequence = []
-    
-    for token_idx in audio_tokens:
-        heatmap = get_token_heatmap(patch_probs, token_idx)
-        # Optional: Add smoothing/thresholding here
-        heatmap_sequence.append(heatmap)
-        
-    return torch.stack(heatmap_sequence)  # [40, 16, 16]
+    for t in range(num_steps):
+        attn_t = cross_attn[t]  # [256]
+        # Reshape to [16, 16]
+        attn_grid = attn_t.view(16, 16)
+        # Optionally normalize to 0..1
+        attn_grid = (attn_grid - attn_grid.min()) / (attn_grid.max() - attn_grid.min() + 1e-6)
+        heatmap_sequence.append(attn_grid)
+    return heatmap_sequence  # list of length T, each is [16, 16]
 
 def overlay_heatmap_on_frame(frame, heatmap, alpha=0.6):
     """
-    Args:
-        frame: [3, 224, 224] uint8 tensor
-        heatmap: [16, 16] probability tensor 
-        alpha: transparency of overlay
-    Returns:
-        overlaid_frame: [224, 224, 3] numpy array (BGR for cv2)
+    No real change except we pass in [16,16] for heatmap
     """
-    # Convert frame to numpy and correct channel order
-    frame = frame.permute(1, 2, 0).cpu().numpy()  # [224, 224, 3]
+    frame_np = frame.permute(1, 2, 0).cpu().numpy()  # [224,224,3]
     
-    # Resize heatmap to frame size
-    heatmap = heatmap.cpu().numpy()
-    heatmap = cv2.resize(heatmap, (224, 224))
+    heatmap_np = heatmap.cpu().numpy()
+    heatmap_np = cv2.resize(heatmap_np, (224, 224))
     
-    # Apply colormap (let's use COLORMAP_JET for now)
-    heatmap = cv2.applyColorMap(
-        (heatmap * 255).astype(np.uint8), 
+    heatmap_color = cv2.applyColorMap(
+        (heatmap_np * 255).astype(np.uint8),
         cv2.COLORMAP_JET
     )
-    
-    # Overlay
-    overlaid = cv2.addWeighted(frame, 1-alpha, heatmap, alpha, 0)
+    overlaid = cv2.addWeighted(frame_np, 1-alpha, heatmap_color, alpha, 0)
     return overlaid
 
 
-def create_visualization_video(frame, audio_tokens, patch_probs, output_path, fps=40):
+def create_visualization_video(frame, cross_attn, output_path, fps=40):
     """
-    Creates and saves a visualization video showing audio token localizations
-    
-    Args:
-        frame: [3, 224, 224] normalized tensor from model input
-        audio_tokens: [40] tensor of token indices
-        patch_probs: [256, 4096] patch probabilities from model
-        output_path: path to save the video
-        fps: frames per second (40 for 1:1 with audio tokens)
+    - 'frame' is [3,224,224]
+    - 'cross_attn' is [T, 256] => T steps
     """
-    # Unnormalize the input frame
-    frame = unnormalize_frame(frame)
+    # 1) Unnormalize
+    frame_unnorm = unnormalize_frame(frame)
     
-    # Get sequence of heatmaps
-    heatmap_sequence = create_sequential_heatmaps(patch_probs, audio_tokens)
-    
-    # Setup video writer
+    # 2) Build heatmap sequence
+    T = cross_attn.size(0)
+    heatmaps = create_sequential_heatmaps(cross_attn, num_steps=T)
+
+    # 3) Setup video writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    video_writer = cv2.VideoWriter(
-        str(output_path), 
-        fourcc, 
-        fps, 
-        (224, 224)  # frame size
-    )
-    
-    # Create and write each frame
-    for heatmap in heatmap_sequence:
-        overlaid_frame = overlay_heatmap_on_frame(frame, heatmap)
-        video_writer.write(overlaid_frame)
-    
+    video_writer = cv2.VideoWriter(str(output_path), fourcc, fps, (224, 224))
+
+    # 4) Write each step's overlaid frame
+    for t in range(T):
+        overlaid = overlay_heatmap_on_frame(frame_unnorm, heatmaps[t])
+        video_writer.write(overlaid)
     video_writer.release()
 
 

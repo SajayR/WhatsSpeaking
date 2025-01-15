@@ -5,15 +5,21 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 import time
 import numpy as np
-from viz import save_snapshot_grid, create_visualization_video
 import gc
-from dataset import VideoAudioDataset
-from model import Valo
-DO_WANDB = True
 import resource
+
+# Local imports
+from viz import create_visualization_video  # We'll assume we adapted viz.py for cross-attn
+from dataset import VideoAudioDataset
+from model import ValoAR  # <-- Your new autoregressive model (rename as needed)
+
+DO_WANDB = True
+
+# Increase file limit if needed
 soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
 print(f"File limit increased from {soft} to {hard}")
+
 
 def get_visualization_samples(dataset, num_samples=16):
     """
@@ -25,12 +31,12 @@ def get_visualization_samples(dataset, num_samples=16):
         'indices': vis_indices,
         'data': [dataset[i] for i in vis_indices]
     }
-    
+
     # Collate into batched tensors
     frames = torch.stack([s['frames'] for s in vis_samples['data']])
     audio = torch.stack([s['audio'] for s in vis_samples['data']])
     paths = [s['path'] for s in vis_samples['data']]
-    
+
     return {
         'indices': vis_indices,
         'frames': frames,
@@ -38,49 +44,50 @@ def get_visualization_samples(dataset, num_samples=16):
         'paths': paths
     }
 
+
 def train(
-    model, 
+    model,
     dataset,
     num_epochs=25,
     batch_size=32,
     learning_rate=1e-4,
-    vis_interval=1000,  # steps between visualizations
+    vis_interval=1000,      # steps between visualizations
     checkpoint_interval=5000,
     output_dir="./outputs",
     resume_from=None,
-    warmup_steps=5000,
+    warmup_steps=5000
 ):
     # Setup
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-    
+
     # Cosine learning rate scheduler with warmup
+    steps_per_epoch = len(dataset) // batch_size
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, 
-        T_max=num_epochs * len(dataset) // batch_size,
+        optimizer,
+        T_max=num_epochs * steps_per_epoch,
         eta_min=learning_rate * 0.01
     )
-    
+
     dataloader = DataLoader(
-        dataset, 
-        batch_size=batch_size, 
-        shuffle=True, 
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
         num_workers=4,
         persistent_workers=False,
         prefetch_factor=8
-        #pin_memory=True
     )
-    
-    # Get visualization samples
+
+    # Prepare a few samples for recurring visualization
     vis_samples = get_visualization_samples(dataset)
     for k in ['frames', 'audio']:
         vis_samples[k] = vis_samples[k].to(device)
-    
+
     # Create output directory
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Resume from checkpoint if specified
     start_epoch = 0
     global_step = 0
@@ -95,11 +102,11 @@ def train(
         global_step = ckpt['global_step']
         best_loss = ckpt['best_loss']
         print(f"Resumed from epoch {start_epoch}, step {global_step}")
-    
+
     # Initialize wandb
     if DO_WANDB:
         wandb.init(
-            project="PoopyPants",
+            project="PoopyPants",  # update as needed
             config={
                 "learning_rate": learning_rate,
                 "batch_size": batch_size,
@@ -109,39 +116,47 @@ def train(
                 "dataset_size": len(dataset)
             }
         )
-    
+
     # Training loop
     for epoch in range(start_epoch, num_epochs):
         model.train()
         epoch_losses = []
         start_time = time.time()
-        
+
         pbar = tqdm(dataloader, desc=f"Epoch {epoch}")
         for batch in pbar:
-            # Warmup learning rate
+            # Warmup schedule
             if global_step < warmup_steps:
                 lr = learning_rate * (global_step + 1) / warmup_steps
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = lr
-            
+
             # Move batch to device
-            frames = batch['frames'].to(device)
-            audio = batch['audio'].to(device)
-            
+            frames = batch['frames'].to(device)   # [B, 3, 224, 224]
+            audio = batch['audio'].to(device)     # [B, 40]
+
             # Forward pass
-            #print("Going to forward pass")
-            loss, token_probs, stats = model(frames, audio)
-            #print("Forward pass complete")
+            # Returns:
+            #   loss: scalar
+            #   logits: [B, T, 4096]
+            #   cross_attn: [B, T, 256] (if implemented in your model)
+            loss, logits, cross_attn = model(frames, audio)
             epoch_losses.append(loss.item())
-            
+
+            # Optionally compute a simple token-level accuracy
+            with torch.no_grad():
+                preds = logits.argmax(dim=-1)          # [B, T]
+                step_acc = (preds == audio).float().mean().item()
+
             # Backward pass
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+
+            # Scheduler step after warmup
             if global_step >= warmup_steps:
                 scheduler.step()
-            
+
             # Log metrics
             if DO_WANDB:
                 wandb.log({
@@ -149,69 +164,43 @@ def train(
                     "learning_rate": optimizer.param_groups[0]['lr'],
                     "epoch": epoch,
                     "global_step": global_step,
-                    **stats,  # This unpacks all our stats
+                    "step_acc": step_acc
                 }, step=global_step)
-            
+
             # Visualization step
-            if global_step % vis_interval == 0 and global_step > 0:
+            if (global_step % vis_interval == 0) and (global_step > 0):
                 model.eval()
                 with torch.no_grad():
-                    patch_probs = model(vis_samples['frames'], vis_samples['audio'])
-                    # Debug prediction statistics
-                    print("\nVisualization Sample Statistics:")
-                    print(f"Patch probs shape: {patch_probs.shape}")  # Should be [batch, 256, 4096]
-                    probs = patch_probs
-                    
-                    print(f"Overall stats:")
-                    print(f"Mean prob: {probs.mean():.4f}")
-                    print(f"Prob >0.5: {(probs > 0.5).float().mean():.4f}")
-                    print(f"Prob >0.7: {(probs > 0.7).float().mean():.4f}")
-                    print(f"Prob >0.9: {(probs > 0.9).float().mean():.4f}")
-                    
-                    # For each sample in batch
-                    for b in range(len(vis_samples['audio'])):
-                        print(f"\nSample {b}:")
-                        # Get probabilities for just the tokens that appear in the audio
-                        token_probs = probs[b, :, vis_samples['audio'][b]]  # [256, 40]
-                        print(f"Token-specific stats:")
-                        print(f"Mean prob for audio tokens: {token_probs.mean():.4f}")
-                        print(f"Max prob for audio tokens: {token_probs.max():.4f}")
-                        print(f"Patches with prob >0.5 for audio tokens: {(token_probs > 0.5).float().mean():.4f}")
-                    
-                # Create and save visualization grid
-                #print(f"Patch prob shape during visualization: {patch_probs[0].shape}")
-                #print(f"Patch probs during visualization: {patch_probs[0]}")
-                # Get top 10 values
-                #top_values, top_indices = torch.topk(patch_probs[0].flatten(), 10)
-                #print("\nTop 10 patch probability values:")
-                #for i, (val, idx) in enumerate(zip(top_values, top_indices)):
-                #    print(f"{i+1}. Value: {val:.4f}, Index: {idx}")
-                print(f"Range of patch probs: {patch_probs.min().item()} to {patch_probs.max().item()}")
-                grid = save_snapshot_grid(
-                    vis_samples['frames'], 
-                    vis_samples['audio'],
-                    patch_probs,
-                    output_dir,
-                    step=global_step
-                )
-                #saving video for the first sample
-                create_visualization_video(vis_samples['frames'][0], vis_samples['audio'][0], patch_probs[0], output_dir / f"visualization_step{global_step}.mp4")
-                # Log to wandb
-                if DO_WANDB:
-                    wandb.log({
-                        "visualizations": wandb.Image(grid)
-                    }, step=global_step)
-                
+                    # Use the same teacher forcing approach on the visualization samples
+                    _, viz_logits, viz_attn = model(vis_samples['frames'], vis_samples['audio'])
+                    print("\nVisualization Sample Info:")
+                    print(f" cross_attn shape: {viz_attn.shape}")   # [vis_batch, T, 256]?
+                    print(f" logits shape: {viz_logits.shape}")     # [vis_batch, T, 4096]
+
+                    # Show min/max of cross_attn for debugging
+                    min_val = viz_attn.min().item()
+                    max_val = viz_attn.max().item()
+                    print(f" cross_attn range: {min_val:.4f} to {max_val:.4f}")
+
+                    # Save a short video for the first sample
+                    out_video_path = output_dir / f"visualization_step{global_step}.mp4"
+                    create_visualization_video(
+                        vis_samples['frames'][0],
+                        viz_attn[0],         # shape [T, 256]
+                        out_video_path,
+                        fps=40
+                    )
+
                 model.train()
                 torch.cuda.empty_cache()
                 gc.collect()
-            
+
             # Save checkpoint
-            if global_step % checkpoint_interval == 0 and global_step > 0:
+            if (global_step % checkpoint_interval == 0) and (global_step > 0):
                 avg_loss = np.mean(epoch_losses)
                 is_best = avg_loss < best_loss
                 best_loss = min(avg_loss, best_loss)
-                
+
                 ckpt_path = output_dir / f"checkpoint_step{global_step}.pt"
                 torch.save({
                     'model': model.state_dict(),
@@ -221,7 +210,7 @@ def train(
                     'global_step': global_step,
                     'best_loss': best_loss
                 }, ckpt_path)
-                
+
                 if is_best:
                     best_path = output_dir / "best_model.pt"
                     torch.save({
@@ -232,40 +221,42 @@ def train(
                         'global_step': global_step,
                         'best_loss': best_loss
                     }, best_path)
-            
+
             global_step += 1
             pbar.set_postfix({
                 'loss': f"{loss.item():.4f}",
                 'lr': f"{optimizer.param_groups[0]['lr']:.6f}"
             })
-        
-        # Epoch summary
+
+        # End of epoch summary
         epoch_time = time.time() - start_time
         avg_loss = np.mean(epoch_losses)
         print(f"\nEpoch {epoch} Summary:")
-        print(f"Average Loss: {avg_loss:.4f}")
-        print(f"Time: {epoch_time:.2f}s")
-        print(f"Steps: {global_step}")
+        print(f"  Average Loss: {avg_loss:.4f}")
+        print(f"  Time: {epoch_time:.2f}s")
+        print(f"  Steps: {global_step}")
+
         if DO_WANDB:
             wandb.log({
                 "epoch_loss": avg_loss,
                 "epoch_time": epoch_time
             }, step=global_step)
 
+
 if __name__ == "__main__":
     # Training parameters
     NUM_EPOCHS = 50
-    BATCH_SIZE = 80
+    BATCH_SIZE = 8
     LEARNING_RATE = 1e-4
     VIS_INTERVAL = 1000
     CHECKPOINT_INTERVAL = 5000
     OUTPUT_DIR = "./outputs"
     WARMUP_STEPS = 5000
-    
-    # Initialize dataset and model
+
+    # Create dataset and model
     dataset = VideoAudioDataset("/home/cis/VGGSound_Splits")
-    model = Valo()
-    
+    model = ValoAR()  # Your new autoregressive model
+
     # Start training
     train(
         model=model,
@@ -277,5 +268,6 @@ if __name__ == "__main__":
         checkpoint_interval=CHECKPOINT_INTERVAL,
         output_dir=OUTPUT_DIR,
         warmup_steps=WARMUP_STEPS,
-        resume_from="/home/cis/heyo/AudTok/WhosSpeaking/outputs/checkpoint_step65000.pt"  # Set to checkpoint path to resume
+        resume_from=None  
+        # or None if you don't want to resume
     )
