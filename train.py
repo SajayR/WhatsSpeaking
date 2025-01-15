@@ -8,8 +8,8 @@ import numpy as np
 from viz import save_snapshot_grid, create_visualization_video
 import gc
 from dataset import VideoAudioDataset
-from model import Valo
-DO_WANDB = True
+from model import SequentialAudioVisualModel
+DO_WANDB = False
 import resource
 soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
@@ -130,7 +130,7 @@ def train(
             
             # Forward pass
             #print("Going to forward pass")
-            loss = model(frames, audio)
+            loss = model.compute_loss(frames, audio)
             #print("Forward pass complete")
             epoch_losses.append(loss.item())
             
@@ -171,7 +171,6 @@ def train(
                 print(f"Range of patch probs: {patch_probs.min().item()} to {patch_probs.max().item()}")
                 grid = save_snapshot_grid(
                     vis_samples['frames'], 
-                    vis_samples['audio'],
                     patch_probs, # now is of shape [B, 256, 40]
                     output_dir,
                     step=global_step
@@ -237,16 +236,16 @@ def train(
 if __name__ == "__main__":
     # Training parameters
     NUM_EPOCHS = 50
-    BATCH_SIZE = 80
+    BATCH_SIZE = 16
     LEARNING_RATE = 1e-4
     VIS_INTERVAL = 1000
     CHECKPOINT_INTERVAL = 5000
-    OUTPUT_DIR = "./outputs"
+    OUTPUT_DIR = "./outputsAR"
     WARMUP_STEPS = 5000
     
     # Initialize dataset and model
     dataset = VideoAudioDataset("/home/cis/VGGSound_Splits")
-    model = Valo()
+    model = SequentialAudioVisualModel()
     
     # Start training
     train(
@@ -259,5 +258,5 @@ if __name__ == "__main__":
         checkpoint_interval=CHECKPOINT_INTERVAL,
         output_dir=OUTPUT_DIR,
         warmup_steps=WARMUP_STEPS,
-        resume_from="/home/cis/heyo/AudTok/WhosSpeaking/outputs/checkpoint_step65000_topk.pt"  # Set to checkpoint path to resume
+        resume_from=None
     )
