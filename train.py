@@ -130,7 +130,7 @@ def train(
             
             # Forward pass
             #print("Going to forward pass")
-            loss, token_probs, stats = model(frames, audio)
+            loss = model(frames, audio)
             #print("Forward pass complete")
             epoch_losses.append(loss.item())
             
@@ -149,14 +149,13 @@ def train(
                     "learning_rate": optimizer.param_groups[0]['lr'],
                     "epoch": epoch,
                     "global_step": global_step,
-                    **stats,  # This unpacks all our stats
                 }, step=global_step)
             
             # Visualization step
             if global_step % vis_interval == 0 and global_step > 0:
                 model.eval()
                 with torch.no_grad():
-                    patch_probs = model(vis_samples['frames'], vis_samples['audio'])
+                    patch_probs = model(vis_samples['frames'], vis_samples['audio'], return_all_logits=False)
                     # Debug prediction statistics
                     print("\nVisualization Sample Statistics:")
                     print(f"Patch probs shape: {patch_probs.shape}")  # Should be [batch, 256, 4096]
@@ -167,35 +166,18 @@ def train(
                     print(f"Prob >0.5: {(probs > 0.5).float().mean():.4f}")
                     print(f"Prob >0.7: {(probs > 0.7).float().mean():.4f}")
                     print(f"Prob >0.9: {(probs > 0.9).float().mean():.4f}")
+            
                     
-                    # For each sample in batch
-                    for b in range(len(vis_samples['audio'])):
-                        print(f"\nSample {b}:")
-                        # Get probabilities for just the tokens that appear in the audio
-                        token_probs = probs[b, :, vis_samples['audio'][b]]  # [256, 40]
-                        print(f"Token-specific stats:")
-                        print(f"Mean prob for audio tokens: {token_probs.mean():.4f}")
-                        print(f"Max prob for audio tokens: {token_probs.max():.4f}")
-                        print(f"Patches with prob >0.5 for audio tokens: {(token_probs > 0.5).float().mean():.4f}")
-                    
-                # Create and save visualization grid
-                #print(f"Patch prob shape during visualization: {patch_probs[0].shape}")
-                #print(f"Patch probs during visualization: {patch_probs[0]}")
-                # Get top 10 values
-                #top_values, top_indices = torch.topk(patch_probs[0].flatten(), 10)
-                #print("\nTop 10 patch probability values:")
-                #for i, (val, idx) in enumerate(zip(top_values, top_indices)):
-                #    print(f"{i+1}. Value: {val:.4f}, Index: {idx}")
                 print(f"Range of patch probs: {patch_probs.min().item()} to {patch_probs.max().item()}")
                 grid = save_snapshot_grid(
                     vis_samples['frames'], 
                     vis_samples['audio'],
-                    patch_probs,
+                    patch_probs, # now is of shape [B, 256, 40]
                     output_dir,
                     step=global_step
                 )
                 #saving video for the first sample
-                create_visualization_video(vis_samples['frames'][0], vis_samples['audio'][0], patch_probs[0], output_dir / f"visualization_step{global_step}.mp4")
+                #create_visualization_video(vis_samples['frames'][0], vis_samples['audio'][0], patch_probs[0], output_dir / f"visualization_step{global_step}.mp4")
                 # Log to wandb
                 if DO_WANDB:
                     wandb.log({
