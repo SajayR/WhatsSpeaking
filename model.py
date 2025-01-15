@@ -11,23 +11,48 @@ class ViTEmbedder(nn.Module):
     def __init__(self, model_name='vit_base_patch16_224', pretrained=True):
         super().__init__()
         
-        self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14') #torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14')
-        # Project to 4096 classes for classification
-        self.classifier = nn.Linear(self.model.embed_dim, 4096)
+        self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')
+        embed_dim = self.model.embed_dim
+        
+        # Audio processing
+        self.audio_embedding = nn.Embedding(4096, embed_dim)
+        self.pos_embedding = nn.Parameter(torch.randn(1, 40, embed_dim) * 0.02)  # learned positional embedding
+        self.audio_attention = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=8,
+            batch_first=True
+        )
+        
+        # Fusing audio into visual
+        self.fusion_layer = nn.Sequential(
+            nn.Linear(embed_dim * 2, embed_dim),
+            nn.GELU(),
+            nn.Linear(embed_dim, embed_dim)
+        )
+        
+        # Final classification
+        self.classifier = nn.Linear(embed_dim, 4096)
         
         for param in self.model.parameters():
             param.requires_grad = True
             
-    def forward(self, x):
-        """
-        Args:
-            x: (batch_size, channels, height, width)
-        Returns:
-            patch_embeddings: (batch_size, num_patches, embedding_dim)
-        """
-        x = self.model.get_intermediate_layers(x, n=1)[0]
-        x = self.classifier(x)
-        return x
+    def forward(self, frame, audio):
+        # Process audio sequence with positional encoding
+        audio_embeds = self.audio_embedding(audio)  # [B, 40, D]
+        audio_embeds = audio_embeds + self.pos_embedding  # add positional info
+        audio_embeds, _ = self.audio_attention(
+            audio_embeds, audio_embeds, audio_embeds
+        )
+        audio_context = audio_embeds.mean(dim=1, keepdim=True)  # [B, 1, D]
+        
+        # Rest stays the same...
+        visual_feats = self.model.get_intermediate_layers(frame, n=1)[0]
+        audio_context = audio_context.expand(-1, visual_feats.shape[1], -1)
+        fused = torch.cat([visual_feats, audio_context], dim=-1)
+        fused = self.fusion_layer(fused)
+        out = self.classifier(fused)
+        return out
+    
 def compute_prediction_stats(token_probs, target):
     """
     Args:
@@ -119,7 +144,7 @@ class Valo(nn.Module):
             During inference:
                 patch_probs: tensor of shape (batch_size, 256, 4096) - per-patch probabilities
         """
-        patch_logits = self.vit(video)  # [batch_size, 256, 4096]
+        patch_logits = self.vit(video, audio)  # [batch_size, 256, 4096]
         #print(f"Patch logits shape: {patch_logits.shape}")
         #print(f"Patch logits: {patch_logits[0]}")
         # If we're in training mode, compute loss
