@@ -277,5 +277,5 @@ if __name__ == "__main__":
         checkpoint_interval=CHECKPOINT_INTERVAL,
         output_dir=OUTPUT_DIR,
         warmup_steps=WARMUP_STEPS,
-        resume_from="/home/cis/heyo/AudTok/WhosSpeaking/outputs/checkpoint_step65000.pt"  # Set to checkpoint path to resume
+        resume_from="/home/cis/heyo/AudTok/WhosSpeaking/outputs/checkpoint_step65000_topk.pt"  # Set to checkpoint path to resume
     )
