@@ -252,9 +252,45 @@ def train(
                 "epoch_time": epoch_time
             }, step=global_step)
 
+import os
+import re
+
+def find_latest_checkpoint(output_dir):
+    """
+    Finds the checkpoint with the highest step number in the output directory.
+    
+    Args:
+        output_dir (str): Directory containing checkpoint files
+        
+    Returns:
+        str: Path to the latest checkpoint, or None if no checkpoints found
+    """
+    if not os.path.exists(output_dir):
+        return None
+        
+    # Find all checkpoint files
+    checkpoints = [f for f in os.listdir(output_dir) if f.startswith('checkpoint_step') and f.endswith('.pt')]
+    
+    if not checkpoints:
+        return None
+        
+    # Extract step numbers using regex
+    step_numbers = []
+    for checkpoint in checkpoints:
+        match = re.search(r'checkpoint_step(\d+)\.pt', checkpoint)
+        if match:
+            step_numbers.append((int(match.group(1)), checkpoint))
+    
+    # Find checkpoint with highest step number
+    if step_numbers:
+        _, latest_checkpoint = max(step_numbers)
+        return os.path.join(output_dir, latest_checkpoint)
+    
+    return None
+
 if __name__ == "__main__":
     # Training parameters
-    NUM_EPOCHS = 50
+    NUM_EPOCHS = 80
     BATCH_SIZE = 80
     LEARNING_RATE = 1e-4
     VIS_INTERVAL = 1000
@@ -265,7 +301,16 @@ if __name__ == "__main__":
     # Initialize dataset and model
     dataset = VideoAudioDataset("/home/cis/VGGSound_Splits")
     model = Valo()
-    
+    print("_________")
+    print("STARTING TRAINING WITH THE FOLLOWING PARAMETERS:")
+    print(f"NUM_EPOCHS: {NUM_EPOCHS}")
+    print(f"BATCH_SIZE: {BATCH_SIZE}")
+    print(f"LEARNING_RATE: {LEARNING_RATE}")
+    print(f"VIS_INTERVAL: {VIS_INTERVAL}")
+    print(f"CHECKPOINT_INTERVAL: {CHECKPOINT_INTERVAL}")
+    print(f"OUTPUT_DIR: {OUTPUT_DIR}")
+    print(f"WARMUP_STEPS: {WARMUP_STEPS}")
+    print("_________")
     # Start training
     train(
         model=model,
@@ -277,5 +322,5 @@ if __name__ == "__main__":
         checkpoint_interval=CHECKPOINT_INTERVAL,
         output_dir=OUTPUT_DIR,
         warmup_steps=WARMUP_STEPS,
-        resume_from="/home/cis/heyo/AudTok/WhosSpeaking/outputs/checkpoint_step65000.pt"  # Set to checkpoint path to resume
+        resume_from=find_latest_checkpoint(OUTPUT_DIR)  # Set to checkpoint path to resume
     )

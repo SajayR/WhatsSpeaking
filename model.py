@@ -101,6 +101,7 @@ class Valo(nn.Module):
 
         # Get max prediction across patches for each token [batch_size, 4096]
         max_logits_per_token = patch_logits.max(dim=1)[0]
+        #print("Max logits per token shape: ", max_logits_per_token.shape)
         
         # Get top-k logits and indices
         k = 40  # Same as number of audio tokens
