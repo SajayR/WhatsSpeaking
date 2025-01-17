@@ -77,17 +77,16 @@ class Valo(nn.Module):
         # Get max prediction across patches for each token [batch_size, 4096]
         max_logits_per_token = patch_logits.max(dim=1)[0]
         
-        # Get top-k logits and indices
-        k = 40  # Same as number of audio tokens
-        _, top_k_indices = torch.topk(max_logits_per_token, k, dim=1)
-        
-        # Create a binary mask for top-k positions
-        mask = torch.zeros_like(max_logits_per_token)
-        mask.scatter_(1, top_k_indices, 1.0)
-       #print("Top-k indices: ", top_k_indices[0])
-        #print("Audio tokens: ", audio_tokens[0])
-        # Apply sigmoid and mask
-        token_probs = torch.sigmoid(max_logits_per_token) * mask
+
+        # Apply sigmoid after taking max to get probabilities
+        token_probs = torch.sigmoid(max_logits_per_token)
+        #print(f"Mean prediction probability: {token_probs.mean():.4f}")
+        #print(f"Fraction of predictions >0.5: {(token_probs > 0.5).float().mean():.4f}")
+        weights = torch.ones_like(token_probs)
+        weights[target == 1] = 50
+        # Binary cross entropy between probabilities and targets
+        loss = F.binary_cross_entropy(token_probs, target, weight=weights)
+
 
         weights = torch.ones_like(target)
         weights[target == 1] = 50
@@ -198,3 +197,4 @@ if __name__ == "__main__":
     has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 
                   for p in valo.parameters())
     print(f"Gradients exist and flow: {has_grad}")
+    print("Check")

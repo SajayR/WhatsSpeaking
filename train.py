@@ -99,7 +99,7 @@ def train(
     # Initialize wandb
     if DO_WANDB:
         wandb.init(
-            project="PoopyPants",
+            project="PoopyPants_basemodel",
             config={
                 "learning_rate": learning_rate,
                 "batch_size": batch_size,
@@ -153,7 +153,7 @@ def train(
                 }, step=global_step)
             
             # Visualization step
-            if global_step % vis_interval == 0 and global_step > 0:
+            if global_step % vis_interval == 0:
                 model.eval()
                 with torch.no_grad():
                     patch_probs = model(vis_samples['frames'], vis_samples['audio'])
@@ -257,7 +257,7 @@ if __name__ == "__main__":
     NUM_EPOCHS = 50
     BATCH_SIZE = 80
     LEARNING_RATE = 1e-4
-    VIS_INTERVAL = 1000
+    VIS_INTERVAL = 5000
     CHECKPOINT_INTERVAL = 5000
     OUTPUT_DIR = "./outputs"
     WARMUP_STEPS = 5000
@@ -277,5 +277,5 @@ if __name__ == "__main__":
         checkpoint_interval=CHECKPOINT_INTERVAL,
         output_dir=OUTPUT_DIR,
         warmup_steps=WARMUP_STEPS,
-        resume_from=None  # Set to checkpoint path to resume
+        resume_from="/home/cis/heyo/AudTok/WhosSpeaking/outputs/checkpoint_step235000.pt"  # Set to checkpoint path to resume
     )
