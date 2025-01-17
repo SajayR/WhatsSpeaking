@@ -38,18 +38,18 @@ def compute_prediction_stats(token_probs, target):
     pos_probs = token_probs[target == 1]
     pos_stats = {
         "pos_mean_prob": pos_probs.mean().item(),
-        "pos_under_25": (pos_probs < 0.25).float().mean().item(),
-        "pos_over_75": (pos_probs > 0.75).float().mean().item(),
-        "pos_correct": (pos_probs > 0.5).float().mean().item()
+        "pos_under_25": (pos_probs < 0.25).float().mean().item(), #bad
+        "pos_over_75": (pos_probs > 0.75).float().mean().item(), #good
+        "pos_correct": (pos_probs > 0.5).float().mean().item() #good
     }
 
     # For negative samples (where target = 0)
     neg_probs = token_probs[target == 0]
     neg_stats = {
         "neg_mean_prob": neg_probs.mean().item(),
-        "neg_under_25": (neg_probs < 0.25).float().mean().item(),
-        "neg_over_75": (neg_probs > 0.75).float().mean().item(),
-        "neg_incorrect": (neg_probs > 0.5).float().mean().item()
+        "neg_under_25": (neg_probs < 0.25).float().mean().item(), #good
+        "neg_over_75": (neg_probs > 0.75).float().mean().item(), #bad
+        "neg_incorrect": (neg_probs > 0.5).float().mean().item() #bad
     }
 
     # Overall prediction distribution
@@ -67,33 +67,17 @@ class Valo(nn.Module):
         self.vit = ViTEmbedder()
         
     def compute_audio_visual_loss(self, patch_logits, audio_tokens, vocab_size=4096):
-        """
-        Args:
-            patch_logits: [batch_size, 256, 4096] - logits for each patch
-            audio_tokens: [batch_size, 40] - token indices
-        Returns:
-            loss: scalar
-        """
         batch_size = patch_logits.size(0)
-        #print(f"Audio tokens shape: {audio_tokens.shape}")
-        #print("Unique tokens per batch:")
-        #for b in range(batch_size):
-        #    unique_tokens = torch.unique(audio_tokens[b])
-        #    print(f"Batch {b}: {len(unique_tokens)} unique out of 40 tokens")
         
         # Create binary target vector
         target = torch.zeros(batch_size, vocab_size, device=patch_logits.device)
-        # For each item in batch, set 1s at token indices
         for b in range(batch_size):
             target[b, audio_tokens[b]] = 1
 
-        # Get max prediction across patches for each token
-        # [batch_size, 256, 4096] -> [batch_size, 4096]
-        # In compute_audio_visual_loss
-        #print(f"Number of 1s in target: {target.sum()}")  # Should be 40 per batch
-        #print(f"Target shape: {target.shape}")  # Should be [batch_size, 4096]
+        # Get max prediction across patches for each token [batch_size, 4096]
         max_logits_per_token = patch_logits.max(dim=1)[0]
         
+
         # Apply sigmoid after taking max to get probabilities
         token_probs = torch.sigmoid(max_logits_per_token)
         #print(f"Mean prediction probability: {token_probs.mean():.4f}")
@@ -103,7 +87,23 @@ class Valo(nn.Module):
         # Binary cross entropy between probabilities and targets
         loss = F.binary_cross_entropy(token_probs, target, weight=weights)
 
+
+        weights = torch.ones_like(target)
+        weights[target == 1] = 50
+        
+        # Compute loss only on the selected tokens
+        loss = F.binary_cross_entropy(token_probs, target, weight=weights)
+        
+        # Add top-k accuracy to stats
+        top_k_accuracy = torch.zeros(batch_size, device=patch_logits.device)
+        for b in range(batch_size):
+            correct_tokens = set(audio_tokens[b].cpu().numpy())
+            predicted_tokens = set(top_k_indices[b].cpu().numpy())
+            top_k_accuracy[b] = len(correct_tokens.intersection(predicted_tokens)) / k
+        
         stats = compute_prediction_stats(token_probs, target)
+        stats['top_k_accuracy'] = top_k_accuracy.mean().item()
+        
         return loss, token_probs, stats
         
     def forward(self, video, audio):
@@ -119,7 +119,8 @@ class Valo(nn.Module):
                 patch_probs: tensor of shape (batch_size, 256, 4096) - per-patch probabilities
         """
         patch_logits = self.vit(video)  # [batch_size, 256, 4096]
-        
+        #print(f"Patch logits shape: {patch_logits.shape}")
+        #print(f"Patch logits: {patch_logits[0]}")
         # If we're in training mode, compute loss
         if self.training:
             loss, token_probs, stats = self.compute_audio_visual_loss(patch_logits, audio)

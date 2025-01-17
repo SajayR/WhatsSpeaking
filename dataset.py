@@ -53,7 +53,7 @@ def extract_audio_from_video(video_path: Path) -> torch.Tensor:
         return torch.zeros(1, 40)
 
 def load_and_preprocess_video(video_path: str) -> torch.Tensor:
-    decoder = VideoDecoder(video_path, device="cpu")
+    decoder = VideoDecoder(video_path, device="cpu", num_ffmpeg_threads=4)
     time = random.uniform(0, 1)
     frame = decoder.get_frames_played_at(seconds=[time]).data # [B, C, H, W]
     transform = transforms.Compose([
@@ -63,6 +63,7 @@ def load_and_preprocess_video(video_path: str) -> torch.Tensor:
     ])
     frame_tensor = transform(frame)
     frame_tensor = frame_tensor.to(torch.device("cuda"))
+    del decoder
     return frame_tensor
 
 class VideoAudioDataset(Dataset):
