@@ -98,9 +98,10 @@ class Valo(nn.Module):
         token_probs = torch.sigmoid(max_logits_per_token)
         #print(f"Mean prediction probability: {token_probs.mean():.4f}")
         #print(f"Fraction of predictions >0.5: {(token_probs > 0.5).float().mean():.4f}")
-        
+        weights = torch.ones_like(token_probs)
+        weights[target == 1] = 50
         # Binary cross entropy between probabilities and targets
-        loss = F.binary_cross_entropy(token_probs, target)
+        loss = F.binary_cross_entropy(token_probs, target, weight=weights)
 
         stats = compute_prediction_stats(token_probs, target)
         return loss, token_probs, stats
