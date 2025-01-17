@@ -196,3 +196,4 @@ if __name__ == "__main__":
     has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 
                   for p in valo.parameters())
     print(f"Gradients exist and flow: {has_grad}")
+    print("Check")
